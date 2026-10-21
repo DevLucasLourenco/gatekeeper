@@ -1,0 +1,41 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/engine/run.py", "hook", "UserPromptSubmit"], "timeout": 15 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Skill",
+        "hooks": [
+          { "type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/engine/run.py", "hook", "PostToolUse"], "timeout": 15 }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          { "type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/engine/run.py", "hook", "PostToolUseFailure"], "timeout": 15 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/engine/run.py", "hook", "SubagentStop"], "timeout": 15 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/engine/run.py", "hook", "Stop"], "timeout": 30 }
+        ]
+      }
+    ]
+  }
+}

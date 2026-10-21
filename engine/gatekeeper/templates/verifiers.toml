@@ -1,0 +1,31 @@
+# gatekeeper: gates enforced by Claude Code hooks. Reference: README.md of the plugin.
+language = "en"
+on_error = "open"
+max_blocks = 3
+bypass_token = "#skip-gates"
+ignore = []
+
+[inject]
+enabled = true
+
+# Any change to the project needs both verifiers, run after the last change.
+[[gates]]
+id = "verify"
+description = "After changing files, run the reviewer and tester subagents in parallel, then fix what they find."
+when = "changed"
+[gates.require]
+subagents = ["reviewer", "tester"]
+
+# A gate scoped to paths applies only when a matching path changed.
+# [[gates]]
+# id = "perf"
+# description = "Changes to src/ also need the auditor subagent."
+# paths = ["src/**"]
+# [gates.require]
+# subagents = ["auditor"]
+
+[[gates]]
+id = "closing"
+description = "End every response with a short summary under the heading \"Summary\"."
+[gates.require]
+final_text = "Summary"

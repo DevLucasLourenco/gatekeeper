@@ -1,0 +1,18 @@
+{
+  "name": "gatekeeper",
+  "displayName": "gatekeeper",
+  "version": "0.1.0",
+  "description": "Per-turn gates for Claude Code, enforced by hooks: a response that changed the project cannot end until the required subagents, skills or closing text are there.",
+  "author": {
+    "name": "Lucas Lourenço"
+  },
+  "keywords": [
+    "hooks",
+    "gates",
+    "quality",
+    "verification"
+  ],
+  "license": "MIT",
+  "repository": "https://github.com/DevLucasLourenco/gatekeeper",
+  "homepage": "https://github.com/DevLucasLourenco/gatekeeper#readme"
+}

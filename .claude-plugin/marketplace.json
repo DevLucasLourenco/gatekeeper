@@ -1,0 +1,12 @@
+{
+  "name": "gatekeeper",
+  "description": "Marketplace for the gatekeeper plugin: per-turn gates for Claude Code, enforced by hooks.",
+  "owner": { "name": "Lucas Lourenço" },
+  "plugins": [
+    {
+      "name": "gatekeeper",
+      "source": "./",
+      "description": "Per-turn gates for Claude Code, enforced by hooks."
+    }
+  ]
+}

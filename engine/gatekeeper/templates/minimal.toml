@@ -1,0 +1,15 @@
+# gatekeeper: gates enforced by Claude Code hooks. Reference: README.md of the plugin.
+language = "en"          # "en" or "pt-BR": language of block messages
+on_error = "open"        # "open": an internal error lets the response end; "closed": it blocks
+max_blocks = 3           # blocks per turn before gatekeeper gives up (1 to 8)
+bypass_token = "#skip-gates"   # in your prompt: "#skip-gates" or "#skip-gates:id1,id2"
+ignore = []              # globs of dirty paths that never count as a change
+
+[inject]
+enabled = true           # remind Claude of the gates on every prompt
+
+[[gates]]
+id = "closing"
+description = "End every response with a short summary under the heading \"Summary\"."
+[gates.require]
+final_text = "Summary"
