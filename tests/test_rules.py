@@ -112,5 +112,15 @@ class ParseBypassTest(unittest.TestCase):
         self.assertIsNone(parse_bypass("#skip-gatesxyz", "#skip-gates"))
 
 
+class UnknownCommitTest(unittest.TestCase):
+    def test_path_scoped_gates_apply_when_commit_paths_are_unknown(self):
+        from gatekeeper.rules import applies
+        from gatekeeper.turn import UNKNOWN_COMMIT, TurnFacts
+
+        facts = TurnFacts(changed_paths=frozenset({UNKNOWN_COMMIT}))
+        lib_gate = next(g for g in CONFIG.gates if g.id == "lib")
+        self.assertTrue(applies(lib_gate, facts))
+
+
 if __name__ == "__main__":
     unittest.main()

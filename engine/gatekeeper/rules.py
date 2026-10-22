@@ -7,7 +7,7 @@ from typing import NamedTuple
 
 from .config import Config, Gate
 from .matching import normalize, path_matches
-from .turn import TurnFacts
+from .turn import UNKNOWN_COMMIT, TurnFacts
 
 
 class Violation(NamedTuple):
@@ -48,6 +48,8 @@ def applies(gate: Gate, facts: TurnFacts) -> bool:
         return False
     if not gate.paths:
         return True
+    if UNKNOWN_COMMIT in facts.changed_paths:
+        return True  # a commit whose paths git could not list may touch any of them
     return any(path_matches(path, pattern) for path in facts.changed_paths for pattern in gate.paths)
 
 

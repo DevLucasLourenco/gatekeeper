@@ -1,6 +1,6 @@
 import unittest
 
-from gatekeeper.turn import analyze, is_automatic_prompt, snapshot_hash
+from gatekeeper.turn import UNKNOWN_COMMIT, analyze, is_automatic_prompt, snapshot_hash
 
 CLEAN: dict = {}
 EDITED = {"src/a.py": [" M", 1, 10]}
@@ -127,6 +127,19 @@ class CommitTest(unittest.TestCase):
         unknown["committed"] = None
         facts = analyze([turn(snapshot=self.START), subagent("qa"), at(unknown)], unknown)
         self.assertEqual(facts.subagents_after_last_change, set())
+
+    def test_unknown_commit_paths_count_as_a_change(self):
+        # diff-tree failed (start commit gone after gc, timeout): the commit must not vanish.
+        unknown = tree("h2")
+        unknown["committed"] = None
+        facts = analyze([turn(snapshot=self.START)], unknown)
+        self.assertTrue(facts.changed)
+        self.assertIn(UNKNOWN_COMMIT, facts.changed_paths)
+
+    def test_unknown_commit_paths_without_a_new_head_are_no_change(self):
+        same = tree("h1")
+        same["committed"] = None
+        self.assertFalse(analyze([turn(snapshot=self.START)], same).changed)
 
     def test_committing_a_deletion_keeps_the_same_content(self):
         deleted = tree("h1", {"gone.py": [" D", None, None]})

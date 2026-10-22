@@ -21,6 +21,10 @@ import re
 #  "committed": {path: [mtime, size] | None} | None}; see snapshot.take_snapshot.
 Snapshot = dict
 
+# Stands for the paths of a commit made in the turn when git could not list them
+# (start commit gone after gc, timeout). A path-scoped gate treats it as a match.
+UNKNOWN_COMMIT = "<commit with unknown paths>"
+
 _SLASH_COMMAND = re.compile(r"^/([A-Za-z0-9_.:-]+)")
 # Prompts Claude Code submits by itself: a background task finished, or a
 # subagent (or another session) handed back its report.
@@ -161,16 +165,20 @@ def analyze(events: list, final_snapshot: Snapshot | None) -> TurnFacts:
 
     changed: frozenset[str] = frozenset()
     if final_snapshot is not None and first_hash is not None:
-        _, final_paths, committed = _parts(final_snapshot)
+        final_head, final_paths, committed = _parts(final_snapshot)
         committed_paths = frozenset(committed or ())
         if baseline is None:
             # No full baseline (log started mid-turn): every dirty path is suspect.
             if previous_hash != first_hash:
                 changed = frozenset(final_paths) | committed_paths
+                if committed is None:
+                    changed |= {UNKNOWN_COMMIT}
         else:
-            _, base_paths, _ = _parts(baseline)
+            base_head, base_paths, _ = _parts(baseline)
             dirty = (path for path in set(base_paths) | set(final_paths) if base_paths.get(path) != final_paths.get(path))
             changed = frozenset(dirty) | committed_paths
+            if committed is None and final_head != base_head:
+                changed |= {UNKNOWN_COMMIT}
 
     def names(kind: str, after: int) -> frozenset[str]:
         return frozenset(name for position, k, name in evidence if k == kind and position > after)
