@@ -14,9 +14,9 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .config import Config, ConfigError, load_config, raw_on_error
-from .snapshot import take_snapshot
+from .snapshot import CURRENT_HEAD, take_snapshot
 from .state import StateStore
-from .turn import analyze, snapshot_hash
+from .turn import analyze, is_automatic_prompt, snapshot_hash
 
 DEFAULT_MAX_BLOCKS = 3
 
@@ -50,12 +50,17 @@ def handle(event: str, payload: Mapping, env: Mapping) -> HookResult:
 
 def _on_prompt(config: Config, store: StateStore, root: Path, session: str, payload: Mapping) -> HookResult:
     prompt = payload.get("prompt")
+    prompt = prompt if isinstance(prompt, str) else ""
+    if is_automatic_prompt(prompt) and store.first_event(session) is not None:
+        # Claude Code, not the user, sent it: the turn that launched the work goes on,
+        # and nothing in it (a #skip-gates in a subagent report) counts as the user's.
+        return HookResult()
     snapshot = take_snapshot(root, config.ignore)
     store.start_turn(
         session,
         {
             "kind": "turn",
-            "prompt": prompt if isinstance(prompt, str) else "",
+            "prompt": prompt,
             "snapshot": snapshot,
             "hash": snapshot_hash(snapshot),
         },
@@ -68,9 +73,16 @@ def _on_prompt(config: Config, store: StateStore, root: Path, session: str, payl
 
 
 def _on_tool(config: Config, store: StateStore, root: Path, session: str, payload: Mapping) -> HookResult:
-    # Snapshot first: a skill that changes files must count as evidence after its own change.
-    store.append(session, {"kind": "snapshot", "hash": snapshot_hash(take_snapshot(root, config.ignore))})
     tool_input = payload.get("tool_input")
+    if payload.get("tool_name") in ("Agent", "Task"):
+        _record_launch(store, session, tool_input, payload.get("tool_response"))
+        return HookResult()
+    # Snapshot first: a skill that changes files must count as evidence after its own change.
+    snapshot = take_snapshot(root, config.ignore, _turn_head(store, session))
+    event = {"kind": "snapshot", "hash": snapshot_hash(snapshot)}
+    if snapshot is not None:
+        event["head"] = snapshot["head"]
+    store.append(session, event)
     if payload.get("tool_name") == "Skill" and isinstance(tool_input, Mapping):
         skill = tool_input.get("skill")
         if isinstance(skill, str) and skill:
@@ -78,10 +90,44 @@ def _on_tool(config: Config, store: StateStore, root: Path, session: str, payloa
     return HookResult()
 
 
+def _record_launch(store: StateStore, session: str, tool_input, response) -> None:
+    """A subagent left running in the background: the response may end before it does.
+
+    A foreground subagent is not recorded: its SubagentStop came before this hook.
+    """
+    if not isinstance(response, Mapping):
+        return
+    if response.get("isAsync") is not True and response.get("status") != "async_launched":
+        return
+    name = tool_input.get("subagent_type") if isinstance(tool_input, Mapping) else None
+    agent_id = response.get("agentId")
+    store.append(
+        session,
+        {
+            "kind": "launch",
+            "name": name if isinstance(name, str) and name else "general-purpose",
+            "id": agent_id if isinstance(agent_id, str) else None,
+        },
+    )
+
+
+def _turn_head(store: StateStore, session: str):
+    """HEAD when the turn started, for snapshots to list what was committed since."""
+    first = store.first_event(session)
+    source = first.get("snapshot") if first is not None and first.get("kind") == "turn" else first
+    if isinstance(source, Mapping) and "head" in source and (source["head"] is None or isinstance(source["head"], str)):
+        return source["head"]
+    return CURRENT_HEAD
+
+
 def _on_subagent_stop(config: Config, store: StateStore, root: Path, session: str, payload: Mapping) -> HookResult:
     agent_type = payload.get("agent_type")
+    agent_id = payload.get("agent_id")
     if isinstance(agent_type, str) and agent_type:
-        store.append(session, {"kind": "subagent", "name": agent_type})
+        event = {"kind": "subagent", "name": agent_type}
+        if isinstance(agent_id, str) and agent_id:
+            event["id"] = agent_id
+        store.append(session, event)
     return HookResult()
 
 
@@ -89,7 +135,7 @@ def _on_stop(config: Config, store: StateStore, root: Path, session: str, payloa
     from . import messages
     from .rules import evaluate
 
-    facts = analyze(store.events(session), take_snapshot(root, config.ignore))
+    facts = analyze(store.events(session), take_snapshot(root, config.ignore, _turn_head(store, session)))
     final_text = payload.get("last_assistant_message")
     verdict = evaluate(config, facts, final_text if isinstance(final_text, str) else "")
     record = {"session": session, "bypassed": list(verdict.bypassed), "changed": sorted(facts.changed_paths)[:50]}
@@ -97,6 +143,10 @@ def _on_stop(config: Config, store: StateStore, root: Path, session: str, payloa
         store.audit({**record, "outcome": "bypassed" if verdict.bypassed else "passed"})
         return HookResult()
     failed = [v.gate_id for v in verdict.violations]
+    if facts.pending_subagents:
+        # Not the end of the turn: each subagent's hand-back resumes it, and that Stop judges again.
+        store.audit({**record, "outcome": "waiting", "gates": failed, "pending": sorted(facts.pending_subagents)})
+        return HookResult()
     if facts.blocks >= config.max_blocks:
         store.audit({**record, "outcome": "gave_up", "gates": failed})
         return HookResult()

@@ -9,7 +9,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Skill",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Skill|Agent|Task",
         "hooks": [
           { "type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/engine/run.py", "hook", "PostToolUse"], "timeout": 15 }
         ]

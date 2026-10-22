@@ -87,11 +87,11 @@ class SnapshotRealGitTest(unittest.TestCase):
         (self.root / "relatório final.txt").write_text("x", encoding="utf-8")
         (self.root / "dir com espaço").mkdir()
         (self.root / "dir com espaço" / "ação.py").write_text("x", encoding="utf-8")
-        self.assertEqual(set(take_snapshot(self.root, ())), {"relatório final.txt", "dir com espaço/ação.py"})
+        self.assertEqual(set(take_snapshot(self.root, ())["paths"]), {"relatório final.txt", "dir com espaço/ação.py"})
 
     def test_git_mv_reports_both_paths(self):
         git(self.root, "mv", "seed.txt", "moved.txt")
-        self.assertEqual(set(take_snapshot(self.root, ())), {"seed.txt", "moved.txt"})
+        self.assertEqual(set(take_snapshot(self.root, ())["paths"]), {"seed.txt", "moved.txt"})
 
     def test_path_cap_skips_stat_but_keeps_every_path(self):
         for name in ("a.txt", "b.txt", "c.txt"):
@@ -100,9 +100,9 @@ class SnapshotRealGitTest(unittest.TestCase):
             first = take_snapshot(self.root, ())
             (self.root / "d.txt").write_text("new", encoding="utf-8")
             second = take_snapshot(self.root, ())
-        self.assertEqual(set(first), {"a.txt", "b.txt", "c.txt"})
-        self.assertEqual(first["c.txt"], ["??", None, None])
-        self.assertIn("d.txt", second)
+        self.assertEqual(set(first["paths"]), {"a.txt", "b.txt", "c.txt"})
+        self.assertEqual(first["paths"]["c.txt"], ["??", None, None])
+        self.assertIn("d.txt", second["paths"])
 
 
 GATES = """

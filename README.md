@@ -142,12 +142,14 @@ A comparação diferencia maiúsculas, como o git. `ignore` vale antes de tudo: 
 
 ```text
 UserPromptSubmit ─► abre o turno: snapshot inicial do git + injeta o resumo dos gates
+                    (prompt automático do Claude Code, como o hand-back de um subagente, não abre turno)
 PostToolUse      ─► depois de Edit/Write/Bash/PowerShell/Skill: novo snapshot (e registra a skill)
-SubagentStop     ─► registra o agent_type do subagente que terminou
+                    depois de Agent: registra o subagente que ficou rodando em segundo plano
+SubagentStop     ─► registra o agent_type e o agent_id do subagente que terminou
 Stop             ─► snapshot final, compara tudo e julga cada gate
 ```
 
-**Mudança vem do git, não do texto do comando.** Cada snapshot é a lista de caminhos sujos do `git status` com tamanho e data de modificação. Comparar snapshots resolve três problemas de detectar escrita por regex:
+**Mudança vem do git, não do texto do comando.** Cada snapshot é o `HEAD` mais a lista de caminhos sujos do `git status`, com tamanho e data de modificação. Comparar snapshots resolve três problemas de detectar escrita por regex:
 
 - Escrever fora do repositório (pasta temporária, scratchpad) não conta como mudança.
 - Caminhos ignorados pelo `.gitignore` (como `target/` e `node_modules/`) não contam.
@@ -155,7 +157,13 @@ Stop             ─► snapshot final, compara tudo e julga cada gate
 
 Uma edição desfeita no mesmo turno não conta como mudança, porque o que vale é a diferença entre o início e o fim. A **ordem** vem da sequência de snapshots: a última mudança é o último snapshot diferente do anterior, e só valem as evidências registradas depois dela. Uma skill que muda arquivos conta como evidência depois da própria mudança.
 
-**Log enxuto.** Só o início do turno guarda o snapshot completo. Os eventos seguintes guardam um hash dele, que basta para achar a última mudança, e o `Stop` compara o snapshot final com o inicial para saber quais caminhos mudaram. Um turno com centenas de ferramentas num repositório sujo fica em dezenas de KB, não em megabytes.
+**Commit no mesmo turno.** Um turno que começa limpo, edita e faz `git commit` termina limpo, mas o `HEAD` andou. Quando o `HEAD` final difere do inicial, os caminhos que mudaram entre os dois commits (`git diff-tree`, ou `git ls-tree` se o repositório não tinha commit) entram na mudança do turno, respeitando `ignore` e `paths`. Isso cobre `commit --amend`, `reset` para um commit anterior e `checkout` de outro commit. Um `push` não move o `HEAD`, então não é mudança. Um `--amend` que só troca a mensagem também não, porque nenhum caminho muda.
+
+Para a **ordem**, o snapshot compara o que está no disco, não como o git descreve. `git add` e um commit do conteúdo que já estava no disco não movem a última mudança. Por isso o fluxo editar → verificadores → commit passa: o commit não invalida os verificadores que rodaram antes dele. Um commit que traz conteúdo novo (um `--amend` depois de outra edição, um `reset --hard`, um `checkout`) reescreve arquivos e move a última mudança.
+
+**Subagentes em segundo plano.** No app desktop, a ferramenta Agent pode devolver na hora (`isAsync`) e deixar o subagente rodando, mesmo com `run_in_background: false`. Nesse caso o gatekeeper registra o lançamento com o `agentId`. Enquanto algum subagente lançado assim não tiver `SubagentStop` com o mesmo id, o `Stop` não julga: a resposta termina, a auditoria registra `waiting` e nenhum bloqueio é contado. Quando o subagente termina, o Claude Code envia o resultado como um prompt automático (`<agent-message from="...">` com `[Subagent hand-back]`, ou `<task-notification>`). Esse prompt não abre turno novo: o turno que mudou o projeto continua, o `SubagentStop` conta para ele e o `Stop` seguinte julga tudo junto. O payload do `UserPromptSubmit` não diz quem enviou o prompt, então o gatekeeper reconhece esses envelopes pelo começo do texto.
+
+**Log enxuto.** Só o início do turno guarda o snapshot completo. Os eventos seguintes guardam o `HEAD` e um hash dele, que basta para achar a última mudança, e o `Stop` compara o snapshot final com o inicial para saber quais caminhos mudaram. Um turno com centenas de ferramentas num repositório sujo fica em dezenas de KB, não em megabytes.
 
 **Estado fora do projeto.** O log do turno e a auditoria ficam na pasta de dados do plugin (`~/.claude/plugins/data/gatekeeper-gatekeeper/`), nunca no repositório. Se ficassem no repositório, eles mesmos apareceriam como mudança. Cada sessão tem seu log, então duas sessões no mesmo projeto não se misturam. Logs de sessão com mais de 14 dias são apagados quando um turno novo começa.
 
@@ -167,9 +175,9 @@ Uma edição desfeita no mesmo turno não conta como mudança, porque o que vale
 
 ## Escape e auditoria
 
-Escrever `#skip-gates` no prompt dispensa todos os gates daquele turno. `#skip-gates:verify,closing` dispensa só esses. Só o usuário consegue fazer isso, porque o token é lido do prompt que você digitou.
+Escrever `#skip-gates` no prompt dispensa todos os gates daquele turno. `#skip-gates:verify,closing` dispensa só esses. Só o usuário consegue fazer isso, porque o token é lido do prompt que você digitou. Um token dentro do relatório de um subagente ou de uma notificação de tarefa não vale: esses prompts automáticos não abrem turno.
 
-Toda resposta julgada vira um registro na auditoria: `passed`, `blocked` (com os gates), `bypassed` ou `gave_up`, mais os caminhos mudados e os gates dispensados. Quando passa de 5 MB, o arquivo vira `.jsonl.1` e um novo começa. Para ver o resumo:
+Toda resposta julgada vira um registro na auditoria: `passed`, `blocked` (com os gates), `bypassed`, `gave_up` ou `waiting` (havia subagente em segundo plano rodando; vem com `pending`), mais os caminhos mudados e os gates dispensados. Quando passa de 5 MB, o arquivo vira `.jsonl.1` e um novo começa. Para ver o resumo:
 
 ```bash
 python "C:/caminho/para/gatekeeper/engine/run.py" stats
@@ -201,9 +209,10 @@ Medições locais (Windows 11, Python 3.14, pasta dentro do OneDrive). Entre exe
 | Import do caminho dos hooks | ~105 ms |
 | Um snapshot num repositório limpo | ~90 ms (quase tudo é o início do processo `git`) |
 | Um snapshot com 500 arquivos sujos | ~150 ms |
+| Um snapshot depois de um commit no turno | ~160 ms (um `git diff-tree` a mais, só quando o `HEAD` andou) |
 | Processo inteiro de um hook, com 500 arquivos sujos | ~400 a 450 ms |
 
-O custo recai em `UserPromptSubmit`, `Stop` e em cada `Edit`, `Write`, `Bash`, `PowerShell` ou `Skill`. Leituras (`Read`, `Grep`, `Glob`) não disparam nada. Acima de 2000 caminhos sujos, o snapshot deixa de ler tamanho e data de cada arquivo, para não pagar milhares de `stat`. Em repositórios grandes, ligar o `core.fsmonitor` e o `core.untrackedCache` do git acelera o `git status`.
+O custo recai em `UserPromptSubmit`, `Stop` e em cada `Edit`, `Write`, `Bash`, `PowerShell` ou `Skill`. Depois de `Agent`, o hook só registra o lançamento, sem chamar o git. Leituras (`Read`, `Grep`, `Glob`) não disparam nada. Acima de 2000 caminhos sujos, o snapshot deixa de ler tamanho e data de cada arquivo, para não pagar milhares de `stat`. Em repositórios grandes, ligar o `core.fsmonitor` e o `core.untrackedCache` do git acelera o `git status`.
 
 Ficaram para depois:
 
@@ -214,7 +223,10 @@ Ficaram para depois:
 
 - **Só detecta mudança em repositório git.** Fora de git, nenhum gate `changed` dispara; os gates `always` continuam valendo.
 - **Mudanças suas contam.** Arquivo que você salvar no editor durante o turno aparece no snapshot como se fosse do Claude.
-- **Subagente em segundo plano.** Quando ele devolve o resultado, o Claude Code dispara um `UserPromptSubmit`, e isso abre um turno novo no gatekeeper. Uma mudança feita antes disso deixa de ser cobrada, e um `#skip-gates` do prompt original se perde. Rode os verificadores em primeiro plano.
+- **Prompt automático reconhecido pelo texto.** O payload do `UserPromptSubmit` não traz a origem do prompt, então o hand-back de subagente e a notificação de tarefa são reconhecidos pelo começo do texto (`<agent-message from=`, `<task-notification>`). Se o Claude Code mudar esse formato, cada hand-back volta a abrir um turno novo. Um prompt que você digitar começando assim também não abre turno.
+- **Subagente em segundo plano que não volta.** Enquanto um subagente lançado em segundo plano não termina, o `Stop` não julga. Se ele nunca terminar (foi parado, a sessão caiu), os gates daquele turno só voltam a valer no próximo prompt seu.
+- **Prompt seu enquanto o subagente roda.** Um prompt real abre turno novo. A mudança do turno anterior deixa de ser cobrada, e o `SubagentStop` que chegar depois conta para o turno novo.
+- **Commit com muitos caminhos.** Acima de 2000 caminhos entre sujos e commitados, o snapshot não lê tamanho e data do resto, e todo commit novo passa a mover a última mudança.
 - **Repositório muito sujo.** Acima de 2000 caminhos sujos, uma nova edição num arquivo que já estava sujo e ficou além desse limite não aparece. Arquivos novos, apagados e com status alterado continuam aparecendo.
 - **Skill pela ferramenta.** A documentação garante o `PostToolUse` para ferramentas em geral, mas não cita a Skill. Um prompt que começa com `/nome` sempre conta.
 - **Hooks antigos do projeto.** Se o projeto já tem hooks próprios que impõem as mesmas regras (por exemplo um `Stop` que bloqueia), os dois bloqueiam. Desligue os antigos ao migrar. O `inventory` lista esses hooks, e a skill `/gatekeeper` avisa sobre eles.

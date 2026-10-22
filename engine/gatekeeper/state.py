@@ -75,6 +75,15 @@ class StateStore:
     def events(self, session_id: str) -> list:
         return _read_jsonl(self.session_file(session_id))
 
+    def first_event(self, session_id: str) -> dict | None:
+        """The event that opened the turn, reading only the first line."""
+        try:
+            with open(self.session_file(session_id), encoding="utf-8") as handle:
+                event = json.loads(handle.readline())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+        return event if isinstance(event, dict) else None
+
     def audit(self, record: dict) -> None:
         self.audit_file.parent.mkdir(parents=True, exist_ok=True)
         try:
